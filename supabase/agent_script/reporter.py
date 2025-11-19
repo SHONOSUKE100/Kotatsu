@@ -8,6 +8,8 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
+from contextlib import nullcontext
+
 from agent_script import prompts
 from agent_script.article_fetcher import (
     ArticleFetchError,
@@ -18,6 +20,7 @@ from agent_script.article_fetcher import (
 from agent_script.config import FEEDS, FeedConfig
 from agent_script.llm_client import GeminiClient
 from agent_script.logger import log_debug, log_error, log_info, log_warning
+from agent_script.observability import LangSmithObserver
 from agent_script.utils import JsonParsingError, clean_text, dataclass_to_dict, is_within_last_day
 
 
@@ -205,34 +208,44 @@ def _process_entry(feed: FeedConfig, entry: FeedEntry, client: GeminiClient) -> 
     )
 
 
-def process_feed(feed: FeedConfig, client: GeminiClient, now: dt.datetime) -> Optional[FeedReport]:
+def process_feed(feed: FeedConfig, client: GeminiClient, now: dt.datetime, observer: Optional[LangSmithObserver] = None) -> Optional[FeedReport]:
     log_info("Processing feed", {"feed": feed.id})
-    entries = fetch_feed_entries(feed)
-    recent_entries = [entry for entry in entries if is_within_last_day(entry.published, now=now)]
-    if not recent_entries:
-        log_info("No recent entries", {"feed": feed.id})
-        return None
+    
+    run_inputs = {"feed_id": feed.id, "feed_title": feed.title, "feed_url": feed.url}
+    ctx = observer.track_run(f"process_feed_{feed.id}", inputs=run_inputs) if observer else nullcontext()
+    
+    with ctx as run:
+        entries = fetch_feed_entries(feed)
+        recent_entries = [entry for entry in entries if is_within_last_day(entry.published, now=now)]
+        if not recent_entries:
+            log_info("No recent entries", {"feed": feed.id})
+            return None
 
-    items: List[FeedReportItem] = []
-    for entry in recent_entries:
-        log_debug("Processing entry", {"feed": feed.id, "title": entry.title})
-        item = _process_entry(feed, entry, client)
-        if item:
-            items.append(item)
-    if not items:
-        return None
+        items: List[FeedReportItem] = []
+        for entry in recent_entries:
+            log_debug("Processing entry", {"feed": feed.id, "title": entry.title})
+            item = _process_entry(feed, entry, client)
+            if item:
+                items.append(item)
+        if not items:
+            return None
 
-    composed_article = _compose_daily_digest(feed, items, client, now)
-    return FeedReport(
-        feed=FeedInfo(
-            id=feed.id,
-            title=feed.title,
-            url=feed.url,
-            description=feed.description or "",
-        ),
-        items=items,
-        composed_article=composed_article,
-    )
+        composed_article = _compose_daily_digest(feed, items, client, now)
+        result = FeedReport(
+            feed=FeedInfo(
+                id=feed.id,
+                title=feed.title,
+                url=feed.url,
+                description=feed.description or "",
+            ),
+            items=items,
+            composed_article=composed_article,
+        )
+        
+        if observer and run:
+            run.finish(outputs={"items_count": len(items), "feed_id": feed.id})
+        
+        return result
 
 
 def generate_reports(
@@ -240,6 +253,7 @@ def generate_reports(
     *,
     now: Optional[dt.datetime] = None,
     feed_ids: Optional[Sequence[str]] = None,
+    observer: Optional[LangSmithObserver] = None,
 ) -> GenerationResult:
     now = now or dt.datetime.now(dt.timezone.utc)
     selected_feeds: List[FeedConfig]
@@ -247,21 +261,39 @@ def generate_reports(
         selected_feeds = [FEEDS[feed_id] for feed_id in feed_ids if feed_id in FEEDS]
     else:
         selected_feeds = list(FEEDS.values())
-    reports: List[FeedReport] = []
-    for feed in selected_feeds:
-        try:
-            report = process_feed(feed, client, now)
-        except Exception as error:  # pylint: disable=broad-except
-            log_error("フィード処理中にエラーが発生しました", {"feed": feed.id, "error": str(error)})
-            continue
-        if report:
-            reports.append(report)
-            log_info("Feed processed successfully", {"feed": feed.id, "items": len(report.items)})
-    return GenerationResult(
-        generated_at=now,
-        feeds_processed=len(reports),
-        reports=reports,
-    )
+    
+    run_inputs = {
+        "feed_count": len(selected_feeds),
+        "feed_ids": [f.id for f in selected_feeds],
+        "timestamp": now.isoformat(),
+    }
+    ctx = observer.track_run("generate_reports", inputs=run_inputs) if observer else nullcontext()
+    
+    with ctx as run:
+        reports: List[FeedReport] = []
+        for feed in selected_feeds:
+            try:
+                report = process_feed(feed, client, now, observer)
+            except Exception as error:  # pylint: disable=broad-except
+                log_error("フィード処理中にエラーが発生しました", {"feed": feed.id, "error": str(error)})
+                continue
+            if report:
+                reports.append(report)
+                log_info("Feed processed successfully", {"feed": feed.id, "items": len(report.items)})
+        
+        result = GenerationResult(
+            generated_at=now,
+            feeds_processed=len(reports),
+            reports=reports,
+        )
+        
+        if observer and run:
+            run.finish(outputs={
+                "feeds_processed": len(reports),
+                "total_items": sum(len(r.items) for r in reports),
+            })
+        
+        return result
 
 
 def generation_result_to_dict(result: GenerationResult) -> Dict[str, object]:

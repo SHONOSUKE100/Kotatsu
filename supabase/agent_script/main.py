@@ -17,6 +17,7 @@ if str(PROJECT_ROOT.parent) not in sys.path:
 from agent_script.db import persist_generation_result
 from agent_script.logger import init_logger, log_error, log_info
 from agent_script.llm_client import GeminiClient
+from agent_script.observability import LangSmithObserver
 from agent_script.reporter import generate_reports, generation_result_to_dict
 from agent_script.utils import load_env_file
 
@@ -59,8 +60,12 @@ def main():
     if not api_key:
         log_error("GOOGLE_API_KEY is not set. Provide it via environment variable or --env-file.")
         raise SystemExit(1)
+    
+    # Initialize LangSmith observer from environment
+    observer = LangSmithObserver.from_env()
+    
     client = GeminiClient(model_name=args.model, api_key=api_key, rpm_limit=args.rpm_limit)
-    result = generate_reports(client, feed_ids=args.feeds)
+    result = generate_reports(client, feed_ids=args.feeds, observer=observer)
     if not args.skip_db and args.database_url:
         persist_generation_result(result, database_url=args.database_url)
     payload_dict = generation_result_to_dict(result)
