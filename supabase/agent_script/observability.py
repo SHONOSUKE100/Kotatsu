@@ -33,7 +33,7 @@ class _LangSmithRun(AbstractContextManager["_LangSmithRun"]):
         if not self._run_tree or self._closed:
             return
         self._run_tree.end(outputs=dict(outputs or {}))
-        self._run_tree.post_run()
+        self._run_tree.post()
         self._closed = True
 
     def __exit__(self, exc_type, exc, exc_tb):
@@ -43,7 +43,7 @@ class _LangSmithRun(AbstractContextManager["_LangSmithRun"]):
             self._run_tree.end(error=str(exc))
         else:
             self._run_tree.end()
-        self._run_tree.post_run()
+        self._run_tree.post()
         self._closed = True
         return False
 
@@ -51,7 +51,7 @@ class _LangSmithRun(AbstractContextManager["_LangSmithRun"]):
 class _NullRun(AbstractContextManager["_NullRun"]):
     """No-op context manager when LangSmith is disabled."""
 
-    def finish(self, _: Optional[Mapping[str, Any]] = None):
+    def finish(self, outputs: Optional[Mapping[str, Any]] = None):
         return None
 
     def __exit__(self, exc_type, exc, exc_tb):
