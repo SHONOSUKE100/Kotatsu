@@ -16,7 +16,7 @@ import requests
 from bs4 import BeautifulSoup  # type: ignore
 from pdfminer.high_level import extract_text as extract_pdf_text  # type: ignore
 
-from agent_script.config import DEFAULT_FEED_HEADERS, FeedConfig
+from agent_script.config import DEFAULT_ARTICLE_HEADERS, DEFAULT_FEED_HEADERS, FeedConfig
 from agent_script.logger import log_debug, log_error, log_warning
 from agent_script.utils import clean_text, parse_struct_time, resolve_text_field
 
@@ -112,7 +112,7 @@ def fetch_article_text(url: str) -> str:
 
 
 def _fetch_html_content(url: str) -> Tuple[str, BeautifulSoup]:
-    response = requests.get(url, timeout=30)
+    response = requests.get(url, headers=DEFAULT_ARTICLE_HEADERS, timeout=30)
     if not response.ok:
         raise ArticleFetchError(f"Failed to fetch article: {response.status_code}")
     soup = BeautifulSoup(response.text, "html.parser")
@@ -150,7 +150,7 @@ def _detect_media_type(url: str, content_type: Optional[str]) -> str:
 
 
 def _fetch_resource_content(url: str) -> Tuple[str, Optional[BeautifulSoup], str]:
-    response = requests.get(url, timeout=30)
+    response = requests.get(url, headers=DEFAULT_ARTICLE_HEADERS, timeout=30)
     if not response.ok:
         raise ArticleFetchError(f"Failed to fetch resource: {response.status_code}")
     media_type = _detect_media_type(url, response.headers.get("Content-Type"))

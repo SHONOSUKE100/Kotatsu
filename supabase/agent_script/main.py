@@ -17,10 +17,8 @@ if str(PROJECT_ROOT.parent) not in sys.path:
 from agent_script.db import persist_generation_result
 from agent_script.logger import init_logger, log_error, log_info
 from agent_script.llm_client import GeminiClient
-from agent_script.observability import LangSmithObserver
 from agent_script.reporter import generate_reports, generation_result_to_dict
 from agent_script.utils import load_env_file
-
 
 DEFAULT_ENV_PATH = Path(__file__).resolve().parents[1] / "functions" / "create-article" / ".env"
 DEFAULT_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
@@ -62,25 +60,16 @@ def main():
         log_error("GOOGLE_API_KEY is not set. Provide it via environment variable or --env-file.")
         raise SystemExit(1)
     client = GeminiClient(model_name=args.model, api_key=api_key, rpm_limit=args.rpm_limit)
-    observer = LangSmithObserver.from_env()
-    run_inputs = {
-        "feeds": args.feeds or ["*"],
-        "model": args.model,
-        "skipDb": args.skip_db,
-        "rpmLimit": args.rpm_limit,
-    }
-    with observer.track_run("DailyReportAgent", inputs=run_inputs) as run:
-        result = generate_reports(client, feed_ids=args.feeds)
-        if not args.skip_db and args.database_url:
-            persist_generation_result(result, database_url=args.database_url)
-        payload_dict = generation_result_to_dict(result)
-        payload = json.dumps(payload_dict, ensure_ascii=False, indent=2)
-        if args.output:
-            Path(args.output).write_text(payload, encoding="utf-8")
-            log_info("Report written to file", {"path": args.output})
-        else:
-            print(payload)
-        run.finish(payload_dict)
+    result = generate_reports(client, feed_ids=args.feeds)
+    if not args.skip_db and args.database_url:
+        persist_generation_result(result, database_url=args.database_url)
+    payload_dict = generation_result_to_dict(result)
+    payload = json.dumps(payload_dict, ensure_ascii=False, indent=2)
+    if args.output:
+        Path(args.output).write_text(payload, encoding="utf-8")
+        log_info("Report written to file", {"path": args.output})
+    else:
+        print(payload)
 
 
 if __name__ == "__main__":

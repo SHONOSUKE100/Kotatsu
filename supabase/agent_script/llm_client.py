@@ -4,14 +4,20 @@ Thin wrapper around the google-generativeai SDK.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from typing import Any, Deque, Dict, Optional
 
 import google.generativeai as genai  # type: ignore
 
-from agent_script.logger import log_debug
+from agent_script.logger import log_debug, log_warning
 from agent_script.utils import JsonParsingError, parse_json_with_candidates
+
+try:  # pragma: no cover - optional dependency at runtime
+    from langsmith import wrappers as langsmith_wrappers
+except Exception:  # pragma: no cover
+    langsmith_wrappers = None  # type: ignore
 
 
 class _RateLimiter:
@@ -47,7 +53,8 @@ class GeminiClient:
         rpm_limit: int = 15,
     ):
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
+        model = genai.GenerativeModel(model_name)
+        self.model = _wrap_with_langsmith(model)
         self.temperature = temperature
         self._rate_limiter = _RateLimiter(rpm_limit) if rpm_limit > 0 else None
 
@@ -77,3 +84,19 @@ class GeminiClient:
     def generate_json(self, prompt: str, *, temperature: Optional[float] = None) -> Dict[str, Any]:
         text = self.generate_text(prompt, temperature=temperature)
         return parse_json_with_candidates(text)
+
+
+def _wrap_with_langsmith(model: Any) -> Any:
+    api_key = os.getenv("LANGSMITH_API_KEY")
+    tracing_flag = os.getenv("LANGSMITH_TRACING")
+    if not api_key or _is_disabled(tracing_flag) or langsmith_wrappers is None:
+        if api_key and langsmith_wrappers is None:
+            log_warning("LangSmith wrappers unavailable despite LANGSMITH_API_KEY being set.")
+        return model
+    return langsmith_wrappers.wrap_gemini(model)
+
+
+def _is_disabled(flag: Optional[str]) -> bool:
+    if flag is None:
+        return False
+    return flag.strip().lower() in {"0", "false", "off", "no"}
