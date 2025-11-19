@@ -22,6 +22,11 @@ DEFAULT_FEED_HEADERS: Dict[str, str] = {
     "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.7",
 }
 
+DEFAULT_ARTICLE_HEADERS: Dict[str, str] = {
+    "User-Agent": "Mozilla/5.0 (compatible; JournalistAgent/1.0; +https://local.agent)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
 
 FEEDS: Dict[str, FeedConfig] = {
     # "kantei": FeedConfig(
